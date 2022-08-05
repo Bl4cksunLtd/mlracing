@@ -109,6 +109,8 @@ func 	main()	{
 //	bUseWinTime:=flag.Bool("wt",true,"Use WinTime or if false speed")
 	fMaxDistance:=flag.Float64("md",35.0,"Max Distance in furlongs")
 //	iMaxStarters:=flag.Int("ms",40,"Max Starters, default 40")
+	iMin:=flag.Int("min",0,"If specified, min is subtracted from the furlong time, used for scaling, both min and max must be non zero")
+	iMax:=flag.Int("max",0,"If specified, max is used to scale the furlong time. Scaled time=(furlong time-min)/(max-min)")
 	sRType:=flag.String("rt","","list of RTypes to limit results by, e.g. 'Turf,National Hunt Flat' (Default is any)")
 	bST:=flag.Bool("st",true,"Scale Win Time as minutes (true) or seconds (false) Default Minutes")
 	fSDL:=flag.Float64("sdl",1.0,"Low standard deviation multiplier, 1.0=65%% sample range")
@@ -295,17 +297,31 @@ func 	main()	{
 		allcolumns=append(allcolumns,Expand(race.IdGround,NUMGROUND,1)...)
 		allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,race.WindSpeed/MAXWIND)...)
 		allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,race.WindGust/MAXWIND)...)
-		// dump the columns to the csv file
-		for c:=0;c<len(allcolumns);c++	{
-			_,err=fn.WriteString(allcolumns[c]+",")
-		}
 		if *bST	{
 			wt=race.WinTime/60
 		}	else 	{	
 			wt=race.WinTime
 		}
 		speed:=race.WinTime/(float64(race.Distance)/220)
-		fn.WriteString(fmt.Sprintf("%.3f,%.3f\n",speed,wt))
+		if *iMin!=0 && *iMax!=0	{
+			// skip races that would result in a divide by zero
+			if *iMax-*iMin==0 	{
+				continue
+			}
+			// scale the speed to between 0 and 1
+			speed=(speed-float64(*iMin))/float64(*iMax-*iMin)
+			if speed < 0 	{
+				speed=0
+			}
+			if speed>1	{
+				speed=1
+			}
+		}
+		// dump the columns to the csv file
+		for c:=0;c<len(allcolumns);c++	{
+			_,err=fn.WriteString(allcolumns[c]+",")
+		}
+		fn.WriteString(fmt.Sprintf("%.5f,%.5f\n",speed,wt))
 		rownum++
 		fmt.Printf("Row: %d   SP: %.03f WT: %.03f\r",rownum,speed,wt)
 	}
