@@ -54,8 +54,8 @@ const	(
 	NUMWINDDIR	=	8
 	MAXWIND		=	120.0
 	VERMAJ		=	0
-	VERMIN		=	1
-	VERPATCH	=	1
+	VERMIN		=	2
+	VERPATCH	=	0
 )	
 	
 /*
