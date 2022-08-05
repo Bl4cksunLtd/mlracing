@@ -36,7 +36,6 @@ var 	(
 	WindStrs	=	[]string{"","N Str","NE Str","E Str","SE Str","S Str","SW Str","W Str","NW Str"}
 	WindGusts	=	[]string{"","N Gust","NE Gust","E Gust","SE Gust","S Gust","SW Gust","W Gust","NW Gust"}
 	Starters 	=	[]string{"","St2-6","St7-10","St11-15","St16-24","St24+"}
-	RaceTrackMap  map[string]int 		// map of venue|furlongs|rtype to column number
 	RaceTracks		[]string
 	NumRaceTracks	int
 )
@@ -56,7 +55,7 @@ const	(
 	MAXWIND		=	120.0
 	VERMAJ		=	0
 	VERMIN		=	1
-	VERPATCH	=	0
+	VERPATCH	=	1
 )	
 	
 /*
@@ -106,6 +105,7 @@ func 	main()	{
 	sDB:=flag.String("db","sectionals?parseTime=true","Database connection string")
 	sFileName:=flag.String("file","report.csv","Output file name")
 	sHeaderFile:=flag.String("headers","headers.json","Filename to save header map")
+	bSaveHeader:=flag.Bool("save",false,"Save (true) or load (false) header file")
 //	bUseWinTime:=flag.Bool("wt",true,"Use WinTime or if false speed")
 	fMaxDistance:=flag.Float64("md",35.0,"Max Distance in furlongs")
 //	iMaxStarters:=flag.Int("ms",40,"Max Starters, default 40")
@@ -122,7 +122,6 @@ func 	main()	{
 	if *sUser=="" || *sPass==""		{
 		log.Fatal("Username or password missing, specify with -u and -p options.")
 	}
-	fmt.Println("Years: ",*sYear)
 	DBName=fmt.Sprintf("%s:%s@/%s",*sUser,*sPass,*sDB)
 	FileName=*sFileName
 	
@@ -141,52 +140,66 @@ func 	main()	{
 	var 	race 	RacesRecord
 	
 	if *bCC	{	
-		RaceTrackMap=make(map[string]int)
-		// find out how many venue|distance|rtypes there are and populate the map
-		rows,err:=db.Query("select venues_idvenues,vname,round(distance/220,1),idrtype from races,venues "+ 
-							"where venues_idvenues=idvenues and distance!=0 and wintime!=0 and idrunning!=0 and idcond!=0 and "+
-							"idage!=0 and idrtype!=0 and idground!=0 and idclass!=0 and "+
-							"round(wintime/(distance/220),1)<19 and round(wintime/(distance/220),1)>= 10 "+
-							"group by venues_idvenues,round(distance/220,1),idrtype "+
-							"order by venues_idvenues,round(distance/220,1),idrtype")
-		if err != nil {
-			db.Close()
-			log.Fatal("DB Query failed retrieving categories: ", err)
-		}
-		var idvenue			int64
-		var furlongs		float64
-		var rtype 			int
-		var vname 			string
-		for rows.Next() {
-			if err := rows.Scan(&idvenue,&vname,&furlongs,&rtype); err != nil {
-				// Check for a scan error.
-				rows.Close()
+		if *bSaveHeader 	{
+			// grab headers from the database and save as a json file.
+			// find out how many venue|distance|rtypes there are and populate the map
+			rows,err:=db.Query("select venues_idvenues,vname,round(distance/220,1),idrtype from races,venues "+ 
+								"where venues_idvenues=idvenues and distance!=0 and wintime!=0 and idrunning!=0 and idcond!=0 and "+
+								"idage!=0 and idrtype!=0 and idground!=0 and idclass!=0 and "+
+								"round(wintime/(distance/220),1)<19 and round(wintime/(distance/220),1)>= 10 "+
+								"group by venues_idvenues,round(distance/220,1),idrtype "+
+								"order by venues_idvenues,round(distance/220,1),idrtype")
+			if err != nil {
 				db.Close()
-				log.Fatal("Category Rows Scan failed: ", err)
+				log.Fatal("DB Query failed retrieving categories: ", err)
 			}
-			key:=fmt.Sprintf("%s:%.1f:%d",vname,furlongs,rtype)
-			fn.WriteString(fmt.Sprintf("%s,",key))
-			RaceTrackMap[key]=NumRaceTracks
-			RaceTracks=append(RaceTracks,key)
-			NumRaceTracks++
+			var idvenue			int64
+			var furlongs		float64
+			var rtype 			int
+			var vname 			string
+			for rows.Next() {
+				if err := rows.Scan(&idvenue,&vname,&furlongs,&rtype); err != nil {
+					// Check for a scan error.
+					rows.Close()
+					db.Close()
+					log.Fatal("Category Rows Scan failed: ", err)
+				}
+				key:=fmt.Sprintf("%s:%.1f:%d",vname,furlongs,rtype)
+				fn.WriteString(fmt.Sprintf("%s,",key))
+				RaceTracks=append(RaceTracks,key)
+				NumRaceTracks++
+			}
+			rows.Close()
+			fnh,err:=os.Create(*sHeaderFile)
+			if err!=nil	{
+				log.Fatal("Failed to create header file file ",*sHeaderFile," : ",err)
+			}
+			defer fnh.Close()
+			data, _ := json.Marshal(&RaceTracks)
+			fnh.Write(data)
+			fmt.Printf("Found %d racetrack/distance combinations\n",NumRaceTracks)
+		}	else 	{
+			// load the headers from the json file
+			fmt.Printf("Reading header file %s...",*sHeaderFile)
+			headerjson,err:=os.ReadFile(*sHeaderFile)
+			if err!=nil	{
+				log.Fatal("Failed to read header file ",*sHeaderFile," : ",err)
+			}
+			if err=json.Unmarshal(headerjson,&RaceTracks);err!=nil 	{
+				log.Fatal("Failed to unmarshall header file ",*sHeaderFile," : ",err)
+			}
+			NumRaceTracks=len(RaceTracks)
+			fmt.Printf("Loaded RaceTracks map, %d entries\n",NumRaceTracks)
 		}
-		rows.Close()
-		fnh,err:=os.Create(*sHeaderFile)
-		if err!=nil	{
-			log.Fatal("Failed to create header file file ",*sHeaderFile," : ",err)
-		}
-		defer fnh.Close()
-		data, _ := json.Marshal(&RaceTracks)
-		fnh.Write(data)
-		fmt.Printf("Found %d racetrack/distance combinations\n",NumRaceTracks)
 	}	else 	{
 		for v:=1;v<=NUMVENUES;v++	{
 			fn.WriteString(fmt.Sprintf("%s,",Venues[v]))
+			NumRaceTracks++
 		}
 	}
 	
-	
-	query:=fmt.Sprintf("SELECT idraces,venues_idvenues,starters,distance,round(distance/220,1),idrunning,idcond,idage,idrtype,idground,idclass,windspeed,windgust,winddir,wintime "+
+	NumAdditional:=0
+	query:=fmt.Sprintf("SELECT idraces,venues_idvenues,distance,round(distance/220,1),idrunning,idrtype,idground,windspeed,windgust,winddir,wintime "+
 			"FROM races,weather,( "+
 				"SELECT round(distanceyards/220) as furlongs,type,avg(wintime/round(distanceyards/220)) as avgtime,stddev(wintime/round(distanceyards/220)) as stddevtime "+
 				"FROM sectionals.allraces "+
@@ -197,7 +210,7 @@ func 	main()	{
 			"and distance!=0 and wintime!=0 and idrunning!=0 and idcond!=0 and idage!=0 and idrtype!=0 and idground!=0 and idclass!=0 and windspeed<120 and "+
 			"wintime/furlongs>=avgtime-?*stddevtime and wintime/furlongs<=avgtime+?*stddevtime ",*sYear)
 	if *sRType!=""	{
-		query=fmt.Sprintf("SELECT idraces,venues_idvenues,starters,distance,round(distance/220,1),idrunning,idcond,idage,idrtype,idground,idclass,windspeed,windgust,winddir,wintime "+
+		query=fmt.Sprintf("SELECT idraces,venues_idvenues,distance,round(distance/220,1),idrunning,idrtype,idground,windspeed,windgust,winddir,wintime "+
 			"FROM races,weather,( "+
 				"SELECT round(distanceyards/220) as furlongs,type,avg(wintime/round(distanceyards/220)) as avgtime,stddev(wintime/round(distanceyards/220)) as stddevtime "+
 				"FROM sectionals.allraces "+
@@ -218,64 +231,47 @@ func 	main()	{
 	}
 
 	// write header
-	for s:=1;s<=NUMSTARTERS;s++	{
-		fn.WriteString(fmt.Sprintf("%s,",Starters[s]))
-	}
 	fn.WriteString("Dist,")
+	NumAdditional++
 	for i:=1;i<=NUMRUNNING;i++	{
 		fn.WriteString(fmt.Sprintf("%s,",Runnings[i]))
+		NumAdditional++
 	}
-	for i:=1;i<=NUMCOND;i++	{
-		fn.WriteString(fmt.Sprintf("%s,",Conds[i]))
-	}
-	for i:=1;i<=NUMAGE;i++	{
-		fn.WriteString(fmt.Sprintf("%s,",Ages[i]))
-	} 
 	for i:=1;i<=NUMRTYPE;i++	{
 		fn.WriteString(fmt.Sprintf("%s,",RTypes[i]))
+		NumAdditional++
 	}
 	for i:=1;i<=NUMGROUND;i++	{
 		fn.WriteString(fmt.Sprintf("%s,",Grounds[i]))
-	}
-	for i:=1;i<=NUMCLASS;i++	{
-		fn.WriteString(fmt.Sprintf("%s,",Classes[i]))
-	}
-	racetypetitles:=GrabRaceTypeTitles()
-	for i:=1;i<=NUMRACETYPE;i++	{
-		fn.WriteString(racetypetitles[i]+",")
+		NumAdditional++
 	}
 	for i:=1;i<=NUMWINDDIR;i++	{
 		fn.WriteString(fmt.Sprintf("%s,",WindStrs[i]))
+		NumAdditional++
 	}
 	for i:=1;i<=NUMWINDDIR;i++	{
 		fn.WriteString(fmt.Sprintf("%s,",WindGusts[i]))
+		NumAdditional++
 	}
 	fn.WriteString("SP,WT\n")
+	NumAdditional+=2
+	
+	fmt.Printf("Number of Race/track categories %d, %d additional fields, total %d\n",NumRaceTracks,NumAdditional,NumRaceTracks+NumAdditional)
 	
 	rownum:=0		
 	for rows.Next() {
-		if err := rows.Scan(&race.IdRace,&race.IdVenue,&race.Starters,&race.Distance,&race.Furlongs,&race.IdRunning,&race.IdCond,&race.IdAge,&race.IdRType,
-							&race.IdGround,&race.IdClass,&race.WindSpeed,&race.WindGust,&race.WindDir,&race.WinTime); err != nil {
+		if err := rows.Scan(&race.IdRace,&race.IdVenue,&race.Distance,&race.Furlongs,&race.IdRunning,&race.IdRType,
+							&race.IdGround,&race.WindSpeed,&race.WindGust,&race.WindDir,&race.WinTime); err != nil {
 			// Check for a scan error.
 			rows.Close()
 			db.Close()
 			log.Fatal("Rows Scan failed: ", err)
 		}
 		// grab the racetypes for this race id
-		racetypes:=GrabRaceTypes(race.IdRace)	
 		race.WindQuarter=CalcWindQuarter(race.WindDir)
 		// expand out the rows
 		var 	allcolumns	[]string
 		var 	wt 			float64
-		starters:=0
-		switch	{
-		case race.Starters<2:	continue
-		case race.Starters>=2 && race.Starters<=6:		starters=1
-		case race.Starters>=7 && race.Starters<=10:	starters=2
-		case race.Starters>=11 && race.Starters<=15:	starters=3
-		case race.Starters>=16 && race.Starters<=24:	starters=4
-		case race.Starters>24:							starters=5
-		}
 		scaleddistance:=float64(race.Distance)/(*fMaxDistance*220)
 		venuevalue:=float64(1)
 		if *bSV 	{
@@ -286,17 +282,17 @@ func 	main()	{
 			allcolumns=append(allcolumns,Expand(race.IdVenue,NUMVENUES,venuevalue)...)
 		}	else 	{
 			key:=fmt.Sprintf("%s:%.1f:%d",Venues[race.IdVenue],race.Furlongs,race.IdRType)
-			allcolumns=append(allcolumns,Expand(RaceTrackMap[key]+1,NumRaceTracks,1)...)
+			if tracknum,ok:=FindRaceTrack(key);ok	{
+				allcolumns=append(allcolumns,Expand(tracknum+1,NumRaceTracks,1)...)
+			}	else 	{
+				fmt.Printf("Failed to find category %s, skipping\n",key)
+				continue
+			}
 		}
-		allcolumns=append(allcolumns,Expand(starters,NUMSTARTERS,1)...)
 		allcolumns=append(allcolumns,fmt.Sprintf("%.3f",scaleddistance))
 		allcolumns=append(allcolumns,Expand(race.IdRunning,NUMRUNNING,1)...)
-		allcolumns=append(allcolumns,Expand(race.IdCond,NUMCOND,1)...)
-		allcolumns=append(allcolumns,Expand(race.IdAge,NUMAGE,1)...)
 		allcolumns=append(allcolumns,Expand(race.IdRType,NUMRTYPE,1)...)
 		allcolumns=append(allcolumns,Expand(race.IdGround,NUMGROUND,1)...)
-		allcolumns=append(allcolumns,Expand(race.IdClass,NUMCLASS,1)...)
-		allcolumns=append(allcolumns,racetypes...)
 		allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,race.WindSpeed/MAXWIND)...)
 		allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,race.WindGust/MAXWIND)...)
 		// dump the columns to the csv file
@@ -401,4 +397,13 @@ func 	GrabRaceTypes(raceid int64)	(results []string)	{
 	rows.Close()
 	return results[1:]
 }
-	
+
+
+func 	FindRaceTrack(key	string)		(index int, ok bool)	{
+	for r:=0;r<NumRaceTracks;r++	{
+		if RaceTracks[r]==key 	{
+			return r,true
+		}
+	}
+	return 0,false
+}	
