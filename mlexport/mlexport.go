@@ -54,6 +54,9 @@ const	(
 	NUMRACETYPE	=	19
 	NUMWINDDIR	=	8
 	MAXWIND		=	120.0
+	VERMAJ		=	0
+	VERMIN		=	1
+	VERPATCH	=	0
 )	
 	
 /*
@@ -98,6 +101,7 @@ type RacesRecord	struct	{
 	
 
 func 	main()	{
+	fmt.Printf("mlexport v%d.%d.%d\n",VERMAJ,VERMIN,VERPATCH)
 //	iI:=flag.Int("it",10000,"Max interations (default 10000)")
 	sDB:=flag.String("db","sectionals?parseTime=true","Database connection string")
 	sFileName:=flag.String("file","report.csv","Output file name")
