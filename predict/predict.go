@@ -44,7 +44,7 @@ const	(
 	MAXWIND		=	120.0
 	VERMAJ		=	0
 	VERMIN		=	1
-	VERPATCH	=	0
+	VERPATCH	=	1
 
 )	
 
@@ -94,9 +94,7 @@ var 	(
 	OutFileName	string
 	HeaderFile	string
 	Debug		bool
-	Columns		=	[]string{"Venue","Starters","Distance","Going","Condition","Age","RTypes","Surface","Class","Mares","Fillies","Novices'",
-			"Cross Country","Novice","Amateur Jockeys","Conditions","Maiden","Hunters","Selling","Classified","Apprentice","Conditional",
-			"Juvenile","Auction","Seller","Beginners","Claimer","Nursery","WindDir","Wind","Gust"}
+	Columns		=	[]string{"Venue","Distance","Going","RTypes","Surface","WindDir","Wind","Gust"}
 
 	Venues	map[string]int=map[string]int{"Ludlow":1,"Lingfield":2,"Taunton":3,"Newcastle":4,"Clonmel":5,"Southwell":6,"Newbury":7,"Doncaster":8,"Dundalk":9,"Kelso":10,"Navan":11,
 					"Sedgefield":12,"Huntingdon":13,"Leopardstown":14,"Wexford":15,"Wetherby":16,"Wolverhampton":17,"Sandown Park":18,"Fontwell Park":19,"Catterick Bridge":20,
@@ -118,8 +116,7 @@ var 	(
 					"Premier Handicap":12,"Q.R.":13,"Qualifier":14}
 	WindDir	map[string]int	=	map[string]int{"N":1,"NE":2,"E":3,"SE":4,"S":5,"SW":6,"W":7,"NW":8}
 	Starters 	=	[]string{"","St2-6","St7-10","St11-15","St16-24","St24+"}
-	RaceTracks  map[string]int 		// map of venueid|furlongs|rtype to column number
-	RT				[]string
+	RaceTracks  	[]string 		// slice of venueid|furlongs|rtype to column number
 	NumRaceTracks 	int
 	MaxDistance 	float64
 	testX			*tensor.Dense	// testX contains the expanded data to be used to predict times
@@ -247,17 +244,10 @@ func main() {
 				v:=inputX.Elem(row,c)
 				
 				switch {
-				case c==0:	predfile.WriteString(fmt.Sprintf("%s,",v.String()))
-				case c==1:	s,err:=v.Int()
-							require.NoError(err)
-							predfile.WriteString(fmt.Sprintf("%d,",s))
-				case c==2:	predfile.WriteString(fmt.Sprintf("%.1f,",v.Float()))
-				case c>2 && c<9:	predfile.WriteString(fmt.Sprintf("%s,",v.String()))
-				case c>8 && c<28:	i,err:=v.Int()
-									require.NoError(err)
-									predfile.WriteString(fmt.Sprintf("%d,",i))
-				case c==28:	predfile.WriteString(fmt.Sprintf("%s,",v.String()))
-				case c>28:	predfile.WriteString(fmt.Sprintf("%.2f,",v.Float()))
+				case c==0:	predfile.WriteString(fmt.Sprintf("%s,",v.String())) 			//venue
+				case c==1:	predfile.WriteString(fmt.Sprintf("%.1f,",v.Float()))			//distance
+				case c>=2 && c<=5:	predfile.WriteString(fmt.Sprintf("%s,",v.String()))		//going,RTypes,Surface,WindDir
+				case c>5:	predfile.WriteString(fmt.Sprintf("%.2f,",v.Float()))			//wind,gust
 				}
 			}
 		}
@@ -330,11 +320,9 @@ func 	squashedinputs(filename string) 	(df tensor.Tensor,dfinput dataframe.DataF
 	if err!=nil	{
 		log.Fatal("Failed to read header file ",HeaderFile," : ",err)
 	}
-//	err=json.Unmarshal(headerjson,&RaceTracks)
-	err=json.Unmarshal(headerjson,&RT)
+	err=json.Unmarshal(headerjson,&RaceTracks)
 	require.NoError(err)
-//	NumRaceTracks=len(RaceTracks)
-	NumRaceTracks=len(RT)
+	NumRaceTracks=len(RaceTracks)
 	fmt.Printf("Loaded RaceTracks map, %d entries\n",NumRaceTracks)
 
 
@@ -367,78 +355,43 @@ func 	squashedinputs(filename string) 	(df tensor.Tensor,dfinput dataframe.DataF
 		if race.IdVenue,ok=Venues[venue]; !ok	{
 			log.Fatal("Venue ",venue," not a valid venue")
 		}
-		race.Starters,err=dfinput.Elem(row,1).Int()
-		require.NoError(err)
-		starters:=0
-		switch	{
-		case race.Starters<2:	continue
-		case race.Starters>=2 && race.Starters<=6:		starters=1
-		case race.Starters>=7 && race.Starters<=10:	starters=2
-		case race.Starters>=11 && race.Starters<=15:	starters=3
-		case race.Starters>=16 && race.Starters<=24:	starters=4
-		case race.Starters>24:							starters=5
-		}
-		dist,err:=dfinput.Elem(row,2).Int()
+		dist,err:=dfinput.Elem(row,1).Int()
 		if err!=nil || dist==0	{
 			log.Fatal("Distance ",dist," not a valid distance, skipping")
 			continue
 		}	
 		race.Distance=float64(dist)/220
-		running:=dfinput.Elem(row,3).String()
+		running:=dfinput.Elem(row,2).String()
 		if race.IdRunning,ok=Runnings[running];!ok 	{
 			log.Fatal("Going ",running," not a valid Value :",Runnings)
 		}
-		idcond:=dfinput.Elem(row,4).String()
-		if race.IdCond,ok=Conds[idcond];!ok 	{
-			log.Fatal("Condition ",idcond," not a valid Value :",Conds)
-		}
-		ages:=dfinput.Elem(row,5).String()
-		if race.IdAge,ok=Ages[ages];!ok 	{
-			log.Fatal("Age ",ages," not a valid Value :",Ages)
-		}
-		rtypes:=dfinput.Elem(row,6).String()
+		rtypes:=dfinput.Elem(row,3).String()
 		if race.IdRType,ok=RTypes[rtypes];!ok 	{
 			log.Fatal("RTypes ",rtypes," not a valid Value :",RTypes)
 		}
-		ground:=dfinput.Elem(row,7).String()
+		ground:=dfinput.Elem(row,4).String()
 		if race.IdGround,ok=Grounds[ground];!ok 	{
 			log.Fatal("Surface ",ground," not a valid Value :",Grounds)
 		}
-		class:=dfinput.Elem(row,8).String()
-		if race.IdClass,ok=Classes[class];!ok 	{
-			log.Fatal("Classes ",class," not a valid Value :",Classes)
-		}
-		var 	racestypes	[]float32
-		for rt:=0;rt<NUMRACETYPE;rt++	{
-			thisrt:=float32(dfinput.Elem(row,9+rt).Float())
-			racestypes=append(racestypes,thisrt)
-		}
-		windir:=dfinput.Elem(row,9+NUMRACETYPE).String()
+		windir:=dfinput.Elem(row,5).String()
 		if race.WindQuarter,ok=WindDir[windir];!ok 	{
 			log.Fatal("WindDir ",windir," not a valid Value :",WindDir)
 		}
-		race.WindSpeed=dfinput.Elem(row,10+NUMRACETYPE).Float()
-		race.WindGust=dfinput.Elem(row,11+NUMRACETYPE).Float()
+		race.WindSpeed=dfinput.Elem(row,6).Float()
+		race.WindGust=dfinput.Elem(row,7).Float()
 		
 	
 		key:=fmt.Sprintf("%s:%.1f:%d",venue,race.Distance,race.IdRType)
 		if venuecolumn,ok:=FindRaceTrack(key); !ok	{
-	//	if venuecolumn,ok:=RaceTracks[key]; !ok	{
 			fmt.Printf("Skipping Venue %s, Distance(f) %.1f, RType %s not a valid combination\n",venue,race.Distance,rtypes)
 		}	else 	{
 			fmt.Printf("Found %s|%.1f|%s [%s] = column %d\n",venue,race.Distance,rtypes,key,venuecolumn)
 			
-			//allcolumns=append(allcolumns,Expand(venuecolumn,NUMVENUES,1)...)
 			allcolumns=append(allcolumns,Expand(venuecolumn,NumRaceTracks,1)...)
-			allcolumns=append(allcolumns,Expand(starters,NUMSTARTERS,1)...)
 			allcolumns=append(allcolumns,float32(race.Distance/(MaxDistance)))
 			allcolumns=append(allcolumns,Expand(race.IdRunning,NUMRUNNING,1)...)
-			allcolumns=append(allcolumns,Expand(race.IdCond,NUMCOND,1)...)
-			allcolumns=append(allcolumns,Expand(race.IdAge,NUMAGE,1)...)
 			allcolumns=append(allcolumns,Expand(race.IdRType,NUMRTYPE,1)...)
 			allcolumns=append(allcolumns,Expand(race.IdGround,NUMGROUND,1)...)
-			allcolumns=append(allcolumns,Expand(race.IdClass,NUMCLASS,1)...)
-			allcolumns=append(allcolumns,racestypes...)
 			allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,float32(race.WindSpeed/MAXWIND))...)
 			allcolumns=append(allcolumns,Expand(race.WindQuarter,NUMWINDDIR,float32(race.WindGust/MAXWIND))...)
 			allrows=append(allrows,allcolumns...)
@@ -463,7 +416,7 @@ func 	squashedinputs(filename string) 	(df tensor.Tensor,dfinput dataframe.DataF
 
 func 	FindRaceTrack(key	string)		(index int, ok bool)	{
 	for r:=0;r<NumRaceTracks;r++	{
-		if RT[r]==key 	{
+		if RaceTracks[r]==key 	{
 			return r,true
 		}
 	}
