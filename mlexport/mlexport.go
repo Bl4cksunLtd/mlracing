@@ -55,7 +55,7 @@ const	(
 	MAXWIND		=	120.0
 	VERMAJ		=	0
 	VERMIN		=	2
-	VERPATCH	=	0
+	VERPATCH	=	1
 )	
 	
 /*
@@ -167,7 +167,7 @@ func 	main()	{
 					log.Fatal("Category Rows Scan failed: ", err)
 				}
 				key:=fmt.Sprintf("%s:%.1f:%d",vname,furlongs,rtype)
-				fn.WriteString(fmt.Sprintf("%s,",key))
+//				fn.WriteString(fmt.Sprintf("%s,",key))
 				RaceTracks=append(RaceTracks,key)
 				NumRaceTracks++
 			}
@@ -192,6 +192,9 @@ func 	main()	{
 			}
 			NumRaceTracks=len(RaceTracks)
 			fmt.Printf("Loaded RaceTracks map, %d entries\n",NumRaceTracks)
+		}
+		for h:=0;h<NumRaceTracks;h++	{
+			fn.WriteString(fmt.Sprintf("%s,",RaceTracks[h]))
 		}
 	}	else 	{
 		for v:=1;v<=NUMVENUES;v++	{

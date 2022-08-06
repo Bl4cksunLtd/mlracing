@@ -96,8 +96,12 @@ func main() {
 //	require.NoError(err)
 
 	xtrain, ytrain,xtest,ytest := getXYMat(*fn,*fLP)
-	x := tensor.FromMat64(mat.DenseCopyOf(xtrain),tensor.As(g.Float64))
-	y := tensor.FromMat64(mat.DenseCopyOf(ytrain),tensor.As(g.Float64))
+	x := tensor.FromMat64(mat.DenseCopyOf(xtrain),tensor.As(g.Float32))
+	y := tensor.FromMat64(mat.DenseCopyOf(ytrain),tensor.As(g.Float32))
+	log.Infov("x example shape", x.Shape())
+	log.Infov("x Dtype: ",x.Dtype())
+	log.Infov("y example shape", y.Shape())
+	log.Infov("y Dtype: ",y.Dtype())
 
 
 	exampleSize := x.Shape()[0]
@@ -106,11 +110,13 @@ func main() {
 	// load our test set
 //	testX, testY, err := mnist.Load("test", "./testdata", g.Float32)
 //	require.NoError(err)
-	testX:=tensor.FromMat64(mat.DenseCopyOf(xtest),tensor.As(g.Float64))
-	testY:= tensor.FromMat64(mat.DenseCopyOf(ytest),tensor.As(g.Float64))
+	testX:=tensor.FromMat64(mat.DenseCopyOf(xtest),tensor.As(g.Float32))
+	testY:= tensor.FromMat64(mat.DenseCopyOf(ytest),tensor.As(g.Float32))
 
-	log.Infov("x example shape", x.Shape())
+	log.Infov("testX example shape", x.Shape())
+	log.Infov("testX Dtype: ",testX.Dtype())
 	log.Infov("y example shape", y.Shape())
+	log.Infov("testY Dtype: ",testY.Dtype())
 
 	batchSize := 100
 	log.Infov("batchsize", batchSize)
@@ -119,14 +125,15 @@ func main() {
 	log.Infov("num batches", batches)
 
 	numcols:=x.Shape()[1]
-	xi := m.NewInput("x", []int{1,x.Shape()[1]})
-	log.Infov("x input shape", xi.Shape())
-
-	yi := m.NewInput("y", []int{1,1})
-	log.Infov("y input shape", yi.Shape())
-
+	xi := m.NewInput("x", []int{1,x.Shape()[1]},m.AsType(tensor.Float32))
+	log.Infov("xi input shape", xi.Shape())
+	
+	yi := m.NewInput("y", []int{1,1},m.AsType(tensor.Float32))
+	log.Infov("yi input shape", yi.Shape())
+	
 	model, err := m.NewSequential("sp")
 	require.NoError(err)
+
 
 	model.AddLayers(
 		layer.FC{Input: numcols, Output: numcols*2 ,Name: "L0", NoBias: false},
@@ -134,19 +141,20 @@ func main() {
 		layer.FC{Input: numcols*2, Output: 20 ,Name: "L1", NoBias: true},
 		layer.FC{Input: 20, Output: 1 ,Name: "O0", NoBias: true, Activation:layer.NewLinear()},
 		
-		
-		
 	)
-
+	
+	
 	optimizer := g.NewRMSPropSolver(g.WithBatchSize(float64(batchSize)),g.WithLearnRate(LearnRate),g.WithL1Reg(0.2))
+		
 	err = model.Compile(xi, yi,
 		m.WithOptimizer(optimizer),
 		m.WithLoss(m.MSE),
 //		m.WithLoss(m.NewPseudoHuberLoss(0.2)),
 		m.WithBatchSize(batchSize),
 	)
+	
 	require.NoError(err)
-
+	
 	log.Infov("Learnabled: ",model.Learnables())
 
 	epochs := *iI
@@ -162,15 +170,15 @@ func main() {
 			if end > exampleSize {
 				end = exampleSize
 			}
-
 			xi, err := x.Slice(dense.MakeRangedSlice(start, end))
 			require.NoError(err)
 //			xi.Reshape(batchSize, 1, 28, 28)
+//			log.Infov("xi slice Dtype ",xi.Dtype())
 
 			yi, err := y.Slice(dense.MakeRangedSlice(start, end))
 			require.NoError(err)
 //			yi.Reshape(batchSize, 10)
-
+//			log.Infov("yi slice Dtype ",yi.Dtype())
 			err = model.FitBatch(xi, yi)
 			require.NoError(err)
 			model.Tracker.LogStep(epoch, batch)
