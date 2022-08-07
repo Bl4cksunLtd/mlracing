@@ -255,7 +255,7 @@ func main() {
 		
 		d:=yHat.Data().([]float32)
 //		fmt.Sprintf("%.2f\n",d[0])
-		predfile.WriteString(fmt.Sprintf("%.2f\n",d[0]))
+		predfile.WriteString(fmt.Sprintf("%.5f\n",d[0]))
 	}	
 	predfile.Close()
 }
