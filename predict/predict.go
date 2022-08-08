@@ -44,7 +44,7 @@ const	(
 	MAXWIND		=	120.0
 	VERMAJ		=	0
 	VERMIN		=	1
-	VERPATCH	=	1
+	VERPATCH	=	2
 
 )	
 
@@ -88,7 +88,7 @@ type RacesRecord	struct	{
 
 
 var 	(
-	numcols 	=1923
+	numcols 	=1924
 	ModelName	string
 	InFileName 	string
 	OutFileName	string
@@ -166,7 +166,7 @@ func main() {
 	require.NoError(err)
 
 	model.AddLayers(
-		layer.FC{Input: numcols, Output: numcols*2 ,Name: "L0", NoBias: false},
+		layer.FC{Input: numcols, Output: numcols*2 ,Name: "L0", NoBias: true},
 //		layer.Dropout{},
 		layer.FC{Input: numcols*2, Output: 20 ,Name: "L1", NoBias: true},
 		layer.FC{Input: 20, Output: 1 ,Name: "O0", NoBias: true, Activation:layer.NewLinear()},
@@ -181,8 +181,8 @@ func main() {
 	)
 	require.NoError(err)
 	err=loadmodel(ModelName,model)
+	fmt.Println("Model loaded",err)
 	require.NoError(err)
-	
 	predfile,err:=os.Create(OutFileName)
 	if err!=nil 	{
 		log.Fatal("Failed to create output file ",OutFileName," : ",err)
@@ -278,6 +278,7 @@ func 	Expand(id,max int,scale float32)	(columns []float32)	{
 func loadmodel(filename string,model *m.Sequential ) error {
 	f, err := os.Open(filename)
 	if err != nil {
+			log.Errorv("Failed to open model ",err)
 			return err
 	}
 	defer f.Close()
@@ -286,6 +287,8 @@ func loadmodel(filename string,model *m.Sequential ) error {
 	for _, node := range learnnodes {
 			err := enc.Decode(node.Value())
 			if err != nil {
+					log.Errorv("enc.Decode failed: ",err)
+					log.Errorv("with ",node.Value())
 					return err
 			}
 	}

@@ -27,7 +27,7 @@ import (
 const 	(
 	VERMAJ		=	0
 	VERMIN		=	1
-	VERPATCH	=	0
+	VERPATCH	=	1
 )
 var 	(
 	FileName 	string
@@ -136,7 +136,7 @@ func main() {
 
 
 	model.AddLayers(
-		layer.FC{Input: numcols, Output: numcols*2 ,Name: "L0", NoBias: false},
+		layer.FC{Input: numcols, Output: numcols*2 ,Name: "L0", NoBias: true},
 //		layer.Dropout{},
 		layer.FC{Input: numcols*2, Output: 20 ,Name: "L1", NoBias: true},
 		layer.FC{Input: 20, Output: 1 ,Name: "O0", NoBias: true, Activation:layer.NewLinear()},
