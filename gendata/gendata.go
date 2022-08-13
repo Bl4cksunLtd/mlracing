@@ -25,8 +25,9 @@ var 	(
 					"Ripon","Roscommon","Bellewstown","Cartmel","Towcester"}
 	Runnings	=	[]string{"","Firm","Good","Good to Firm","Good to Soft","Good to Yielding","Heavy","Slow","Soft","Soft to Heavy",
 					"Standard","Standard to Slow","Yielding","Yielding to Soft"}
-	TurfRunning =	[]string{"Firm","Good to Firm","Good","Good to Soft","Soft","Soft to Heavy","Heavy"}
-	AllWRunning =	[]string{"Slow","Standard to Slow","Standard"}
+	TurfRunning =		[]string{"Firm","Good to Firm","Good","Good to Soft","Soft","Soft to Heavy","Heavy"}
+	AllWRunning =	[]string{"Standard to Slow","Standard"}
+	IRRunning 	=	[]string{"Firm","Good to Firm","Good","Good to Yielding","Yielding","Soft","Soft to Heavy","Heavy"}
 	Conds		=	[]string{""," ","Handicap","Listed","Stakes"}
 	Ages 		=	[]string{"","10yo+","2yo+","2yo3","2yoO","3yo+","3yo4","3yo5","3yo6","3yoO","4yo+","4yo5","4yo6","4yo7","4yo8","4yoO",
 					"5yo+","5yo6","5yo7","5yo8","5yoO","6yo+","6yo7","7yo+","8yo+"}
@@ -87,7 +88,7 @@ func 	main()	{
 	DB=db
 	
 	// find out how many venue|distance|rtypes there are and populate the map
-	query:=fmt.Sprintf("select venues_idvenues,vname,round(distance/220,1),distance,rtype,ground from races,venues "+ 
+	query:=fmt.Sprintf("select venues_idvenues,countries_idcountry,vname,round(distance/220,1),distance,rtype,ground from races,venues "+ 
 						"where venues_idvenues=idvenues and countries_idcountry=1 and distance!=0 and wintime!=0 and idrunning!=0 and idcond!=0 and "+
 						"idage!=0 and idrtype!=0 and idground!=0 and idclass!=0 and "+
 						"round(wintime/(distance/220),1)<19 and round(wintime/(distance/220),1)>= 10 and "+
@@ -100,6 +101,7 @@ func 	main()	{
 		log.Fatal("DB Query (",query,") failed retrieving categories: ", err)
 	}
 	var idvenue			int64
+	var country			int
 	var distance 		int
 	var furlongs		float64
 	var rtype 			string
@@ -108,7 +110,7 @@ func 	main()	{
 	fn.WriteString("Venue,Distance,Going,RTypes,Surface,WindDir,Wind,Gust\n")
 
 	for rows.Next() {
-		if err := rows.Scan(&idvenue,&vname,&furlongs,&distance,&rtype,&ground); err != nil {
+		if err := rows.Scan(&idvenue,&country,&vname,&furlongs,&distance,&rtype,&ground); err != nil {
 			// Check for a scan error.
 			rows.Close()
 			db.Close()
@@ -116,9 +118,13 @@ func 	main()	{
 		}
 		switch (ground)	{
 		case 	"Turf":
-			for g:=0;g<len(TurfRunning);g++	{
+			running:=TurfRunning
+			if country==2 	{
+				running=IRRunning
+			}
+			for g:=0;g<len(running);g++	{
 				fn.WriteString(fmt.Sprintf("%s,%d,%s,%s,%s,N,0,0\n",
-					vname,distance,TurfRunning[g],rtype,ground))
+					vname,distance,running[g],rtype,ground))
 			}
 		default: 
 			for g:=0;g<len(AllWRunning);g++	{
