@@ -22,6 +22,30 @@ import (
 	"flag"
 )
 
+/* 	Stdfurlong 	-	Sets a races "standard furlong time"
+		Parameters are:
+		*	-u	 		sql username 
+		*	-p	 		sql password
+			-db			Database connection string 									(default "sectionals?parseTime=true")
+			-mn 		name of the model file 										(default model.gob)
+			-headers	name of the json file containing the field headers 			(default headers.json)
+			-md 		Max distance in furlongs, used to scale distances 			(default 35.0)
+			-min		used to scale furlong times, minimum 						(default 0)
+			-max 		used to scale furlong times, maximum						(default 0)
+			-start	 	update starting on this date 								(defaults to yesterday)
+			-end		update ending on this date, 								(defaults to yesterday)
+			-today		if true update std furlong times for all of todays runs.	(default false)
+		(* must be supplied)	
+		
+		The -mn, -headers,-min,-max should match the parameters that were used to train the standard race times model.
+		This program can be used to update/store the standard furlong times for historical races by specifying the start and end 
+		dates or called repeatedly (e.g. hourly) during the day to update the times for todays races based on the latest weather. 
+		Due to the way the weather is currently obtained, this will produce times for the first race of each meeting in the day 
+		and for any race starting in the next 90 minutes of an hour (assuming it is run each hour just after a weather update).
+		
+*/
+
+
 var 	(
 	numcols 	=1924
 	MaxIter 	int
@@ -67,7 +91,7 @@ const	(
 	NUMWINDDIR	=	8
 	MAXWIND		=	120.0
 	VERMAJ		=	0
-	VERMIN		=	0
+	VERMIN		=	1
 	VERPATCH	=	0
 )	
 

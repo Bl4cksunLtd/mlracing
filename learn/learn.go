@@ -24,6 +24,27 @@ import (
 
 )
 
+/* 	Learn 		-	builds and trains a simple model from supplied data
+		Parameters are:
+		-fn 		Input file 																	(default input.csv)
+		-sf			Save the generated model as this file 										(default model.gob)
+		-t1 		The name of the column that should be used as the target for the model 		(default Target)
+		-d1 		Ignore this column as an input source	 									(default Target)
+		-d2 		Ignore this column as an input source
+		-d3 		Ignore this column as an input source
+		-nt 		Number of target columns present in the input file 							(default 2)
+		-it 		Number of iterations to perform during training 							(default 10000)
+		-lr 		Learning rate 																(default 0.001)
+		-p 			filename to save predictions of the test dataset 							(default don't save)
+		-lp 		Learning percentage, what percentage (0-1) of the data is used for training	(default 0.8)
+		
+		Input file must have column headers and any targets must be the last columns. The data can have multiple targets,
+		but only one is used to train the model. Any targets must be excluded as an input using the -dn parameters, so the 
+		file can have between 1 and 3 targets.
+		
+*/
+
+
 const 	(
 	VERMAJ		=	0
 	VERMIN		=	1

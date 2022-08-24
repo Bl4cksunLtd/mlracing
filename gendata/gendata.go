@@ -9,6 +9,23 @@ import (
 	"flag"
 )
 
+/* 	Gendata 	-	Generate data to test the "standard race time" model
+		Parameters are:
+		*	-u	 	sql username 
+		*	-p	 	sql password
+			-db		Database connection string 							(default "sectionals?parseTime=true")
+			-file	output file name									(default "report.csv")
+			-rt 	Limit records to specific race types				(default "'Flat'")
+			-gt 	Limit records to races with specific ground types	(default "Turf")
+		(* must be supplied)	
+		e.g. ./gendata -u username -p password -rt "'Flat','Chase','National Hunt Flat'" -gt "'Allweather','Turf'"
+		
+		The output of this program is fed into the predict program which will attempt to predict standard race times for each
+		row of the report file.
+		
+*/
+			
+
 var 	(
 	MaxIter 	int
 	DBName 		string

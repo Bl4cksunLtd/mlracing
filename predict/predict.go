@@ -30,6 +30,25 @@ import (
 
 )
 
+/* 	Predict 	-	Predict standard race times from a pre-trained model
+		Parameters are:
+		-mn 		name of model file 										(default model.gob)
+		-in 		name of the input csv file								(default input.csv)
+		-out 		name of the output file containing predictions 			(default output.csv)
+		-headers	name of the json file containing the field headers 		(default headers.json)
+		-md 		Max distance in furlongs, used to scale distances 		(default 35.0)
+		-raw 		input data is pre one hit encoded based on categories 	(default true)
+					if false, the input data required one hit encoding
+		-debug 		if true, save the one hit encoded data as debug.csv 	(default false)
+	
+	Input file can be generated using the gendata tool which produces data requiring one hit encoding (-raw=false) 
+	or from a subset of the mlexport program output which is one hit encoded (-raw=true)
+	The header file is used when the input data requires one hit encoding (-raw=false) and is obtained from the mlexport program 
+	used to generate the data for model training. The header file contains a slice of all one hit categories.
+	
+*/
+			
+
 const	(
 	NUMVENUES 	=	86
 	NUMRUNNING	=	13

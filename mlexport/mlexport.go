@@ -10,6 +10,45 @@ import (
 	"flag"
 )
 
+/* 	Mlexport 		-	exports data to be used to train the standard race time model
+		Parameters are:
+		*	-u			Username to connect to the database
+		*	-p 			Password used to connect to the database
+			-db			Database connection string 									(default "sectionals?parseTime=true")
+			-file 		File to save output to 										(default report.csv)
+			-headers	name of json file to save the one hit categories 			(default headers.json)
+			-save		Should the headers json be saved (true) or loaded			(default false)
+			-md			Max distance in furlongs 									(default 35.0)
+			-min		used to scale furlong times, minimum 						(default 0)
+			-max 		used to scale furlong times, maximum						(default 0)
+			-rt 		Limit to this race type (e.g. Flat)							(default any)
+			-st 		Scale win times as minutes (true) rather than seconds 		(default true)
+			-sdl 		Standard deviation lower limit 								(default 1.0)
+			-sdu		Standard deviation upper limit 								(default 1.0)
+			-sv 		Scale venue category by distance in furlongs 				(default false)
+			-cc 		Course categories, use venue|distance|racetype categories	(default false)
+			-years 		Limit data selection to a range of years 					(default 2020)
+		(* must be supplied)	
+		
+		The headers file contains the names of the one hit encoded categories and is used by the predict program when it's inputs 
+		need one hit encoding to ensure the categories match.
+		Distances are converted to furlongs and scaled based on the max distance, which defaults to 35f, so one mile race (8f) would 
+		be scalled to 0.2286.
+		Furlong times can be scalled using the -min and -max parameters. Scaled time=(furlong time-min)/(max-min)
+		By default all race types are exported, but this can be limited using the -rt parameter. For instance setting this to 
+		"'Flat','National Hunt Flat'" would limit data to all non-jump races.
+		To avoid including outlier and erronous data, the -sdl and -sdu parameters can be used to restrict the range of races included.
+		Data is selected where wintime/furlongs>=avgtime-(sdl)*stddevtime and wintime/furlongs<=avgtime+(sdu)*stddevtime. Default 
+		values select races where the furlong time is within 65% of the average.
+		By default matching venue categories are set to 1, but if -sv is true then they are scalled based on the distance in furlongs.
+		The output file is one hit encoded based on venue name, but is -cc is true then the category names are based on an amalgamation 
+		of venue name, race distance in furlongs (to 1 decimal place) and race type. This better handles the impact of wind although is 
+		not perfect.
+		Data is exported based on the date for the years specified (defaults to 2020), specifying -years="2018,2019,2020" would limit data
+		to 2018-2020.
+
+*/
+
 var 	(
 	MaxIter 	int
 	DBName 		string
@@ -101,20 +140,17 @@ type RacesRecord	struct	{
 
 func 	main()	{
 	fmt.Printf("mlexport v%d.%d.%d\n",VERMAJ,VERMIN,VERPATCH)
-//	iI:=flag.Int("it",10000,"Max interations (default 10000)")
 	sDB:=flag.String("db","sectionals?parseTime=true","Database connection string")
 	sFileName:=flag.String("file","report.csv","Output file name")
 	sHeaderFile:=flag.String("headers","headers.json","Filename to save header map")
 	bSaveHeader:=flag.Bool("save",false,"Save (true) or load (false) header file")
-//	bUseWinTime:=flag.Bool("wt",true,"Use WinTime or if false speed")
 	fMaxDistance:=flag.Float64("md",35.0,"Max Distance in furlongs")
-//	iMaxStarters:=flag.Int("ms",40,"Max Starters, default 40")
 	iMin:=flag.Int("min",0,"If specified, min is subtracted from the furlong time, used for scaling, both min and max must be non zero")
 	iMax:=flag.Int("max",0,"If specified, max is used to scale the furlong time. Scaled time=(furlong time-min)/(max-min)")
 	sRType:=flag.String("rt","","list of RTypes to limit results by, e.g. 'Turf,National Hunt Flat' (Default is any)")
 	bST:=flag.Bool("st",true,"Scale Win Time as minutes (true) or seconds (false) Default Minutes")
 	fSDL:=flag.Float64("sdl",1.0,"Low standard deviation multiplier, 1.0=65%% sample range")
-	fSDU:=flag.Float64("sdu",1.0,"Low standard deviation multiplier, 1.0=65%% sample range")
+	fSDU:=flag.Float64("sdu",1.0,"Upper standard deviation multiplier, 1.0=65%% sample range")
 	bSV:=flag.Bool("sv",false,"Scale Venue category by distance")
 	bCC:=flag.Bool("cc",false,"Use track of race as category (ie venue|distance|rtype) or just venue (default - use venue)")
 	sUser:=flag.String("u","","DB Username")
