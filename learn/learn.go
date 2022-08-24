@@ -46,9 +46,9 @@ import (
 
 
 const 	(
-	VERMAJ		=	0
-	VERMIN		=	1
-	VERPATCH	=	1
+	VERMAJ		=	1
+	VERMIN		=	0
+	VERPATCH	=	0
 )
 var 	(
 	FileName 	string
