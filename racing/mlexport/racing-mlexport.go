@@ -55,6 +55,7 @@ var 	(
 	DBName 		string
 	FileName	string
 	DB 			*sql.DB
+	// venues runs from 1 to NumRaceTracks
 	Venues		= []string{"","Ludlow","Lingfield","Taunton","Newcastle","Clonmel","Southwell","Newbury","Doncaster","Dundalk","Kelso","Navan",
 					"Sedgefield","Huntingdon","Leopardstown","Wexford","Wetherby","Wolverhampton","Sandown Park","Fontwell Park","Catterick Bridge",
 					"Kempton Park","Carlisle","Thurles","Wincanton","Plumpton","Leicester","Musselburgh","Limerick","Ffos Las","Exeter",
@@ -66,19 +67,25 @@ var 	(
 					"Ripon","Roscommon","Bellewstown","Cartmel","Towcester"}
 	Runnings	=	[]string{"","Firm","Good","Good to Firm","Good to Soft","Good to Yielding","Heavy","Slow","Soft","Soft to Heavy",
 					"Standard","Standard to Slow","Yielding","Yielding to Soft"}
-	Conds		=	[]string{""," ","Handicap","Listed","Stakes"}
+	Conds		=	[]string{"","Normal","Handicap","Listed","Stakes"}  // make cond[1]="Normal"
 	Ages 		=	[]string{"","10yo+","2yo+","2yo3","2yoO","3yo+","3yo4","3yo5","3yo6","3yoO","4yo+","4yo5","4yo6","4yo7","4yo8","4yoO",
 					"5yo+","5yo6","5yo7","5yo8","5yoO","6yo+","6yo7","7yo+","8yo+"}
 	RTypes		=	[]string{"","Chase","Flat","Hurdle","National Hunt Flat"}
 	Grounds		=	[]string{"","Allweather","Sand","Polytrack","Turf"}
-	Classes		=	[]string{""," ","Class 1","Class 2","Class 3","Class 4","Class 5","Class 6","Class 7","D.I","Grade A","Grade B",
+	Classes		=	[]string{"","NoClass","Class 1","Class 2","Class 3","Class 4","Class 5","Class 6","Class 7","D.I","Grade A","Grade B",
 					"Premier Handicap","Q.R.","Qualifier"}
 	WindStrs	=	[]string{"","N Str","NE Str","E Str","SE Str","S Str","SW Str","W Str","NW Str"}
 	WindGusts	=	[]string{"","N Gust","NE Gust","E Gust","SE Gust","S Gust","SW Gust","W Gust","NW Gust"}
 	Starters 	=	[]string{"","St2-6","St7-10","St11-15","St16-24","St24+"}
 	RaceTracks		[]string
 	NumRaceTracks	int
-	RunnersDF	*dataframe.DataFrame
+	RecentDays		int
+	RecentRuns		int
+	MaxDistance		float64
+	RunnersDF	dataframe.DataFrame
+	CSVfile			*os.File
+	
+	DaysCategorySizes = []int{2,2,2,4,10,10,10,10,10,10,10,10,10,20,20,20,20,20,20,20,20,20,20}		// 23+1 categories
 	
 	FurlongAdjustments = map[int][]float64{	5: {0.031293995,	-0.01930003,	-0.016444745,	-0.011445335,	0.003520834},
 											6: {0.008818549,	-0.011131109,	-0.010983735,	-0.008681728,	0.002652181},
@@ -114,19 +121,30 @@ var 	(
 )
 
 const	(
-	NUMVENUES 	=	86
+	RECENTDAYS	=	30
+	RECENTRUNS	=	7
+	NUMVENUES 	=	87
 	NUMCOURSES	=	1869
 	NUMRUNNING	=	13
 	NUMCOND		=	4
 	NUMAGE		=	24
+	NUMDRAW		=	25				// allow for draws from 0 to 20, 0=> no draw
+	NUMHORSEAGE	=	10				// number of categories for a horse's age ranges from 2 to 11
 	NUMRTYPE	=	4
 	NUMGROUND	=	4
 	NUMCLASS	=	14
 	NUMSTARTERS	=	5
 	NUMRACETYPE	=	19
 	NUMWINDDIR	=	8
+	NUMDAYCATS 	= 	23				// number of day categories
+	NUMRUNSLAST = 	20
 	MAXWIND		=	120.0
+	MAXRATING	=	100.0
+	MAXWEIGHT	=	200.0
 	MAXRUNNERS	=	20				// only process the first 20 horses in a race in finishing order
+	MAXDAYS		=	300				// when categorising number of days old, ignore 0 and place any greater than this in a bucket
+	MAXRUNS 	=	100				// scale number of runs using this
+	MAXRECENTRUNS = 10				// scale number of recent runs using this
 	STARTOFTIME	=	736695			// treat 1st jan 2017 as the first day
 	MAXWEIGHTLBS =	185				// scale weight in lbs by this amount
 	LENGTH2YARDS =	2.625
@@ -164,7 +182,7 @@ type RacesRecord	struct	{
 	Starters 	int
 	Distance	int
 	Furlongs	float64
-	RaceTypes 	string
+	raceTypes 	[]string	// not included in the datafame
 	IdRunning	int
 	IdCond		int
 	IdAge		int
@@ -178,11 +196,15 @@ type RacesRecord	struct	{
 	WinTime		float64
 	StdTime 	float64
 }
+
 	
-type	RunnerRecord	struct	{
+type	DFRunnerRecord	struct	{
 	IdRunner 	int
 	IdRace 		int
 	IdSelection	int
+	IdVenue		int				// from races
+	Distance	int				// from races
+	IdTrack		int				// from races
 	IdJockey	int
 	IdTrainer	int
 	DaysSince 	int				// number of days from 1st jan 2017 (STARTOFTIME) for the race
@@ -191,61 +213,208 @@ type	RunnerRecord	struct	{
 	Draw		int
 	Position	int				// needs dropping before training
 	Weight		int
-	Lengths		float64			// needs dropping before training distance behind
+	Lengths		float64			// lengths behind next horse, needs dropping before training distance behind
+	LB			float64			// lengths behind the winner, needs dropping before training distance behind
 	Age			int
 	Rating		int
 	Odds 		float64			// might need dropping before training
-	Start 		float64			// needs dropping before training
+	Start		float64			// needs dropping before training
+	F4 			float64			// needs dropping before training
+	F3			float64			// needs dropping before training
+	F2			float64			// needs dropping before training
+	F1 			float64			// needs dropping before training
+	Real		float64			// Furlong times are real (true or 1) or estimated from wintime-lengths behind
+	Finish		float64			// needs dropping before training
+	HasHistory	bool			// This is set to true when previous runs are found, otherwise historic values are based on standard
+								// times. When written out to the csv file this value is reversed and written as FirstRun.
+}
+
+	
+type	RunnerRecord	struct	{
+	DFRunnerRecord
+	Count		int				
+	AvgPos		float64			// average position of all previous runs
+	MedPos		float64			// Med position of all previous runs
+	SDPos 		float64			// standard deviation of position in all previous runs
+	MinPos		float64			// minimum position of all previous runs (ignoring 0)
+	MaxPos		float64			// maximum position of all previous runs
+	AvgLB		float64			// average lengths behind of all previous runs
+	MedLB		float64			// median lengths behind of all previous runs
+	SDLB 		float64			// standard deviation of lengths behind in all previous runs
+	MinLB		float64			// minimum lengths behind of all previous runs
+	MaxLB		float64			// maximum lengths behind of all previous runs
+	AvgOdds		float64			// average odds of all previous runs
+	MedOdds		float64			// Med odds of all previous runs
+	SDOdds	 	float64			// standard deviation of odds in all previous runs
+	MinOdds		float64			// minimum odds of all previous runs (ignoring 0)
+	MaxOdds		float64			// maximum odds of all previous runs
 	AvgStart	float64
+	MedStart	float64
 	SDStart		float64
 	MinStart	float64
 	MaxStart	float64
-	F4 			float64			// needs dropping before training
 	AvgF4		float64
+	MedF4		float64
 	SDF4		float64
 	MinF4		float64
 	MaxF4		float64
-	F3			float64			// needs dropping before training
 	AvgF3		float64
+	MedF3		float64
 	SDF3		float64
 	MinF3		float64
 	MaxF3		float64
-	F2			float64			// needs dropping before training
 	AvgF2		float64
+	MedF2		float64
 	SDF2		float64
 	MinF2		float64
 	MaxF2		float64
-	F1 			float64			// needs dropping before training
 	AvgF1		float64
+	MedF1		float64
 	SDF1		float64
 	MinF1		float64
 	MaxF1		float64
-	Real		float64			// Furlong times are real (true or 1) or estimated from wintime-lengths behind
-	Finish		float64			// needs dropping before training
 	AvgF		float64			// average finish/furlongs time for horse
+	MedF		float64			// average finish/furlongs time for horse
 	SDF			float64			// standard deviation for AvgF
 	MinF		float64			// min finish/furlongs for horse
 	MaxF		float64			// max finish/furlongs for horse
-	AvgFinishJ	float64
-	AvgFinishD	float64
-	AvgFinishV	float64
-	AvgPosJ		float64
-	AvgPosD		float64
-	AvgPosV		float64
-	HStrike		float64
+	AvgReal		float64
+	HStrike		float64			// horse strike rate
+	HDNFStrike	float64			// horse DNF strike rate
 	HVStrike	float64 		// horse strike rate at this venue
-	HDStrike	float64			// horse strike rate at this distance
-	JStrike		float64
-	TStrike 	float64
-	H7Strike	float64			// horses strike rate over last 7 runs
-	J7Strike	float64			// jockeys strike rate over last 7 days
-	T7Strike 	float64			// trainers strike rate over last 7 days
-	TimeLastRun	int				// how many days since the horse last ran
-	TimeLastWin	int				// how many days since last win
-	RunsLastWin	int				// how many runs since last win
+	HDStrike	float64			// horse strike rate at this distance (nearest furlong)
+	HTStrike	float64			// horse strije rate at this distance and venue
+	HJStrike	float64			// horse strike rate with this jockey
+	HPlaceStrike	float64			// horse strike rate for placing top 3
+	HVPlaceStrike	float64 		// horse strike rate for placing top 3 at this venue
+	HDPlaceStrike	float64			// horse strike rate for placing top 3 at this distance (nearest furlong)
+	HTPlaceStrike	float64			// horse strike rate for placing top 3 at this distance and venue
+	HJPlaceStrike	float64			// horse strike rate for placing top 3 with this jockey
+	JStrike		float64				// jockey strike rate
+	JVStrike	float64				// jockey strike rate at this venue
+	JDStrike	float64				// jockey strike rate at this distance (nearest furlong)
+	JTStrike	float64				// jockey strike rate at this track (venue and distance)
+	JOStrike 	float64				// jockey strike rate with this trainer
+	JPStrike	float64				// jockey strike rate for placing top 3 at this distance (nearest furlong)
+	JVPStrike	float64				// jockey strike rate at this venue for placing top 3
+	JDPStrike	float64				// jockey strike rate at this distance for placing top 3
+	JTPStrike	float64				// jockey strike rate at this track (venue and distance) for placing top 3
+	JOPStrike 	float64				// jockey strike rate with this trainer for placing top 3
+	JDNF		float64				// jocket dnf strike rate
+	TStrike		float64				// trainer strike rate
+	TVStrike	float64				// trainer strike rate at this venue
+	TDStrike	float64				// trainer strike rate at this distance (nearest furlong)
+	TTStrike	float64				// trainer strike rate at this track (venue and distance)
+	TOStrike 	float64				// trainer strike rate with this jockey
+	TPStrike	float64				// trainer strike rate for top3 
+	TVPStrike	float64				// trainer strike rate for top3 at this venue
+	TDPStrike	float64				// trainer strike rate for top3 at this distance (nearest furlong)
+	TTPStrike	float64				// trainer strike rate for top3 at this track (venue and distance)
+	TOPStrike 	float64				// trainer strike rate with this jockey for a top3
+	TDNF		float64				// trainer dnf strike rate
+	HRStrike	float64			// horse strike rate in recent times
+	HRPlaceStrike	float64		// horse place strike rate in recent times
+	HRDNFStrike	float64			// horse DNF strike rate in recent times
+	HRRStrike	float64			// horse strike rate in recent runs
+	HRRPlaceStrike	float64		// horse place strike rate in recent runs
+	HRRDNFStrike	float64		// horse DNF strike rate in recent runs
+	JRStrike	float64			// jockey strike rate in recent times
+	JRVStrike	float64			// jockey strike rate in recent times at this venue
+	JRTStrike	float64			// jockey strike rate in recent times at this track (C & D)
+	JRDStrike	float64			// jockey strike rate in recent times at this distance
+	JROStrike	float64			// jockey strike rate in recent times with this trainer
+	JRDNF		float64			// jockey DNF strike rate in recent times
+	JRPStrike	float64			// jockey place strike rate in recent times
+	JRVPStrike	float64			// jockey place strike rate in recent times at this venue
+	JRTPStrike	float64			// jockey place strike rate in recent times at this track (C & D)
+	JRDPStrike	float64			// jockey place strike rate in recent times at this distance
+	JROPStrike	float64			// jockey place strike rate in recent times with this trainer
+	JRRStrike	float64			// jockey strike rate in recent runs
+	JRRPStrike	float64			// jockey place strike rate in recent runs
+	JRRVStrike	float64			// jockey strike rate in recent runs at this venue
+	JRRTStrike	float64			// jockey strike rate in recent runs at this track (C & D)
+	JRRDStrike	float64			// jockey strike rate in recent runs at this distance
+	JRROStrike	float64			// jockey strike rate in recent runs with this trainer
+	JRRVPStrike	float64			// jockey place strike rate in recent runs at this venue
+	JRRTPStrike	float64			// jockey place strike rate in recent runs at this track (C & D)
+	JRRDPStrike	float64			// jockey place strike rate in recent runs at this distance
+	JRROPStrike	float64			// jockey place strike rate in recent runs with this trainer
+	JRRDNF		float64			// jockey DNF strike rate in recent RUNS
+	TRStrike	float64			// trainer strike rate in recent times
+	TRVStrike	float64			// trainer strike rate in recent times at this venue
+	TRTStrike	float64			// trainer strike rate in recent times at this track (C & D)
+	TRDStrike	float64			// trainer strike rate in recent times at this distance
+	TROStrike	float64			// trainer strike rate in recent times with this jockey
+	TRDNF		float64			// trainer DNF strike rate in recent times
+	TRPStrike	float64			// trainer place strike rate in recent times
+	TRVPStrike	float64			// trainer place strike rate in recent times at this venue
+	TRTPStrike	float64			// trainer place strike rate in recent times at this track (C & D)
+	TRDPStrike	float64			// trainer place strike rate in recent times at this distance
+	TROPStrike	float64			// trainer place strike rate in recent times with this jockey
+	TRRStrike	float64			// trainer strike rate in recent runs
+	TRRPStrike	float64			// trainer place strike rate in recent runs
+	TRRVStrike	float64			// trainer strike rate in recent runs at this venue
+	TRRTStrike	float64			// trainer strike rate in recent runs at this track (C & D)
+	TRRDStrike	float64			// trainer strike rate in recent runs at this distance
+	TRROStrike	float64			// trainer strike rate in recent runs with this trainer
+	TRRVPStrike	float64			// trainer place strike rate in recent runs at this venue
+	TRRTPStrike	float64			// trainer place strike rate in recent runs at this track (C & D)
+	TRRDPStrike	float64			// trainer place strike rate in recent runs at this distance
+	TRROPStrike	float64			// trainer place strike rate in recent runs with this jockey
+	TRRDNF		float64			// trainer DNF strike rate in recent RUNS
+	TimeLastRun		int				// how many days since the horse last ran
+	TimeLastWin		int				// how many days since last win
+	TimeLastPlace	int				// how many days since last in top 3
+	RunsLastWin		int				// how many runs since last win
+	RunsLastPlace	int				// how many runs since last Place
 	CnDWinner	bool			// course and distance winner
-}
+	HNRuns			int				// number of runs
+	VNRuns			int				// number of runs with same venue
+	DNRuns			int				// number of runs with same distance
+	TNRuns			int				// number of runs with same track (C & D)
+	JNRuns			int				// number of runs with same jockey
+	HRNRuns			int				// number of runs in recent time
+	VRNRuns			int				// number of runs with same venue in recent time
+	DRNRuns			int				// number of runs with same distance in recent time
+	TRNRuns			int				// number of runs with same track (C & D) in recent time
+	JRNRuns			int				// number of runs with same jockey in recent time
+	HRRNRuns		int				// number of runs in recent runs
+	VRRNRuns		int				// number of runs with same venue in recent runs
+	DRRNRuns		int				// number of runs with same distance in recent runs
+	TRRNRuns		int				// number of runs with same track (C & D) in recent runs
+	JRRNRuns		int				// number of runs with same jockey in recent runs
+	JNum			int				// number of jockey runs
+	JVNum			int				// number jockey runs on this venue
+	JDNum			int				// number of jockey runs at this distance
+	JTNum			int				// number of jockey runs at this track (C & D)
+	JONum			int 			// number of jockey/trainer runs 
+	JRNum			int				// number of jockey runs IN recent time
+	JRVNum			int				// number jockey runs on this venue IN recent time
+	JRDNum			int				// number of jockey runs at this distance IN recent time
+	JRTNum			int				// number of jockey runs at this track (C & D) IN recent time
+	JRONum			int 			// number of jockey/trainer runs in recent times
+	JRRNum			int				// number of jockey runs IN recent runs
+	JRRVNum			int				// number jockey runs on this venue IN recent runs
+	JRRDNum			int				// number of jockey runs at this distance IN recent runs
+	JRRTNum			int				// number of jockey runs at this track (C & D) IN recent runs
+	JRRONum			int 			// number of jockey jockey/trainer runs in recent runs
+	TNum			int				// number of trainer runs
+	TVNum			int				// number trainer runs on this venue
+	TDNum			int				// number of trainer runs at this distance
+	TTNum			int				// number of trainer runs at this track (C & D)
+	TONum			int 			// number of trainer/trainer runs 
+	TRNum			int				// number of trainer runs IN recent time
+	TRVNum			int				// number trainer runs on this venue IN recent time
+	TRDNum			int				// number of trainer runs at this distance IN recent time
+	TRTNum			int				// number of trainer runs at this track (C & D) IN recent time
+	TRONum			int 			// number of trainer/trainer runs in recent times
+	TRRNum			int				// number of trainer runs IN recent runs
+	TRRVNum			int				// number trainer runs on this venue IN recent runs
+	TRRDNum			int				// number of trainer runs at this distance IN recent runs
+	TRRTNum			int				// number of trainer runs at this track (C & D) IN recent runs
+	TRRONum			int 			// number of trainer jockey/trainer runs in recent runs
 
+}
 
 func 	main()	{
 	fmt.Printf("mlexport v%d.%d.%d\n",VERMAJ,VERMIN,VERPATCH)
@@ -253,28 +422,25 @@ func 	main()	{
 	sFileName:=flag.String("file","report.csv","Output file name")
 	sHeaderFile:=flag.String("headers","headers.json","Filename to save header map")
 	fMaxDistance:=flag.Float64("md",35.0,"Max Distance in furlongs")
-	iMin:=flag.Int("min",0,"If specified, min is subtracted from the furlong time, used for scaling, both min and max must be non zero")
-	iMax:=flag.Int("max",0,"If specified, max is used to scale the furlong time. Scaled time=(furlong time-min)/(max-min)")
+	iMin:=flag.Int("min",0,"If specified, min is subtracted from the furlong time, used for scaling, both min and max must be non zero (Default 0)")
+	iMax:=flag.Int("max",0,"If specified, max is used to scale the furlong time. Scaled time=(furlong time-min)/(max-min) Default 0")
 	sRType:=flag.String("rt","","list of RTypes to limit results by, e.g. 'Turf,National Hunt Flat' (Default is any)")
 	bST:=flag.Bool("st",true,"Scale Win Time as minutes (true) or seconds (false) Default Minutes")
 	bEMS:=flag.Bool("ems",true,"Estimate missing sectionals (true) or ignore races with missing sectionals")
-	bMHS:=flag.Bool("mhs",false,"Runs must have sectional information or are ignored")
+	bMHS:=flag.Bool("mhs",false,"Runs must have sectional information or are ignored (default false)")
 	sUser:=flag.String("u","","DB Username")
 	sPass:=flag.String("p","","DB Password")
+	bExpand:=flag.Bool("expand",true,"Expand categories out as one hit columns")
 	sYear:=flag.String("years","2021","years to export e.g. \"2018,2019,2020\" ")
 	iMaxYear:=flag.Int("maxyear",2021,"Include all runs up to and including this year")
+	iRecentDays:=flag.Int("rd",RECENTDAYS,"How many days to go back looking for recent form")
+	iRecentRuns:=flag.Int("rr",RECENTRUNS,"How many runs to go back looking for recent form")
 	flag.Parse()
 	if *sUser=="" || *sPass==""		{
 		log.Fatal("Username or password missing, specify with -u and -p options.")
 	}
 	DBName=fmt.Sprintf("%s:%s@/%s",*sUser,*sPass,*sDB)
 	FileName=*sFileName
-	
-	fn,err:=os.Create(FileName)
-	if err!=nil	{
-		log.Fatal("Failed to create file ",FileName," : ",err)
-	}
-	defer fn.Close()
 	
 	db, err := sql.Open("mysql", DBName)
 	if err != nil {
@@ -283,10 +449,23 @@ func 	main()	{
 	defer db.Close()
 	DB=db
 	
-	fmt.Println("Max Distance:",*fMaxDistance)
+	
+	CSVfile,err=os.Create(FileName)
+	if err!=nil	{
+		log.Fatal("Failed to create file ",FileName," : ",err)
+	}
+	defer CSVfile.Close()
+	
+	MaxDistance=*fMaxDistance
+	RecentDays=*iRecentDays
+	RecentRuns=*iRecentRuns
+	fmt.Println("Max Distance:",MaxDistance)
 	fmt.Println("Min/Max     :",*iMin,"/",*iMax)
 	fmt.Println("ST          :",*bST)
 	fmt.Println("EMS         :",*bEMS)
+	fmt.Println("MHS         :",*bMHS)
+	fmt.Println("RecentDays  :",*iRecentDays)
+	fmt.Println("RecentRuns  :",*iRecentRuns)
 	fmt.Println("MHS         :",*bMHS)
 	fmt.Println("Years       :",*sYear)
 	fmt.Println("Max Year    :",*iMaxYear)
@@ -301,7 +480,7 @@ func 	main()	{
 		log.Fatal("Failed to unmarshall header file ",*sHeaderFile," : ",err)
 	}
 	NumRaceTracks=len(RaceTracks)
-	fmt.Printf("Loaded RaceTracks map, %d entries\n",NumRaceTracks)
+	fmt.Printf("Loaded RaceTracks map, %d entries. %d Venues\n",NumRaceTracks,len(Venues))
 
 	// now read in all the race data skipping any that are not present in the RaceTracks slice as it means there is no 
 	// standard time for that race.
@@ -316,103 +495,80 @@ func 	main()	{
 	
 	RunnersDF=GrabRunnerDataFrames(*iMaxYear,*sRType,*bEMS,*bMHS)
 	fmt.Println("Runner dataframe ",RunnersDF.Nrow()," rows : ",RunnersDF.Names())
-	fmt.Println(RunnersDF)
+	fmt.Println(RunnersDF) 
 	
-//	fmt.Println("Joining races and runs together.....")
-//	innerdf:=racedf.InnerJoin(runnersdf,"IdRace")
-//	fmt.Println("Combined Inner dataframe ",innerdf.Nrow()," rows : ",innerdf.Names())
-//	fmt.Println(innerdf)
+/*	fmt.Println("Joining races and runs together.....")
+	RunnersDF=racedf.LeftJoin(GrabRunnerDataFrames(*iMaxYear,*sRType,*bEMS,*bMHS),"IdRace")
+	fmt.Println("Combined Inner dataframe ",RunnersDF.Nrow()," rows : ",RunnersDF.Names())
+	fmt.Println(RunnersDF) */
 
+	// write out the headers if we are in expanded mode
+	if *bExpand	{
+		WriteHeaders(CSVfile)
+	}
+			
 	fmt.Println("Processing Races...")
 	for r:=0;r<racedf.Nrow();r++	{
+//if r==4 	{
+//	return
+//	log.Fatal("STOPPING")
+//}
+		record:=Record{}
 		idrace,err:=racedf.Elem(r,0).Int()
-		if err!=nil	{
-			log.Fatal("racedf.Elem failed to return int:",err)
-		}
-		dayssince,err:=racedf.Elem(r,3).Int()
-		if err!=nil 	{
-			log.Fatal("racedf.elem failed getting days since :",err)
-		}
-		runners:=RunnersDF.FilterAggregation(
-						dataframe.And, 
-						dataframe.F{Colname:"IdRace", Comparator: series.Eq,Comparando:  idrace},
-						dataframe.F{Colname:"IdSelection",Comparator: series.Neq,Comparando: 0},
-		)
-		fmt.Printf("RaceId: %d %d Runners %d DaysSince: \n",idrace,runners.Nrow(),dayssince)
-		for run:=0;run<runners.Nrow();run++		{
-			idselection,err:=runners.Elem(run,2).Int()
-			if err!=nil 	{
-				log.Fatal("Runners.Elem failed: ",err)
+		ErrorNotNil(err,"RaceId ")
+		record.IdRace=idrace
+		record.IdVenue,err=racedf.Elem(r,1).Int()			//IdVenue 	int
+		ErrorNotNil(err,"IdVenue ")
+		record.IdTrack,err=racedf.Elem(r,2).Int()			//IdTrack		int
+		ErrorNotNil(err,"IdTrack ")
+		record.DaysSince,err=racedf.Elem(r,3).Int()			//DaysSince	int 		// number of days from 1st jan 2017 (STARTOFTIME) for the race
+		ErrorNotNil(err,"DaysSince ")
+		record.Starters,err=racedf.Elem(r,4).Int()			//Starters 	int
+		ErrorNotNil(err,"Starters ")
+		record.Distance,err=racedf.Elem(r,5).Int()			//Distance	int
+		ErrorNotNil(err,"Distance ")
+		record.Furlongs=racedf.Elem(r,6).Float()			//Furlongs	float64
+//		record.RaceTypes=racedf.Elem(r,7).String()			//RaceTypes 	string
+		record.IdRunning,err=racedf.Elem(r,7).Int()			//IdRunning	int
+		ErrorNotNil(err,"IdRunning ")
+		record.IdCond,err=racedf.Elem(r,8).Int()			//IdCond		int
+		ErrorNotNil(err,"IdCond ")
+		record.IdAge,err=racedf.Elem(r,9).Int()			//IdAge		int
+		ErrorNotNil(err,"IdAge ")
+		record.IdRType,err=racedf.Elem(r,10).Int()			//IdRType		int
+		ErrorNotNil(err,"IdRType ")
+		record.IdGround,err=racedf.Elem(r,11).Int()			//IdGround	int
+		ErrorNotNil(err,"IdGround ")
+		record.IdClass,err=racedf.Elem(r,12).Int()			//IdClass		int
+		ErrorNotNil(err,"IdClass ")
+		record.WindSpeed=racedf.Elem(r,13).Float()			//WindSpeed	float64
+		record.WindGust=racedf.Elem(r,14).Float()			//WindGust	float64
+		record.WindDir,err=racedf.Elem(r,15).Int()			//WindDir		int
+		ErrorNotNil(err,"WindDir ")
+		record.WindQuarter,err=racedf.Elem(r,16).Int()			//WindQuarter	int
+		ErrorNotNil(err,"WindQuarter ")
+		record.WinTime=racedf.Elem(r,17).Float()			//WinTime		float64
+		record.StdTime=racedf.Elem(r,18).Float()			//StdTime 	float64
+		
+		// grab the race types for this race, returned as a slice of 1 or 0 based on categories
+		record.raceTypes=GrabRaceTypes(idrace)			
+	
+		
+		if record.ProcessRace()	{
+			if *bExpand	{
+				record.ExpandRace()
+			}	else 	{
+				record.WriteRace()
 			}
-			fmt.Printf("Run: %d IdSelection : %d ",run,idselection)
-			runs:=RunnersDF.FilterAggregation(
-						dataframe.And, 
-						dataframe.F{Colname:"IdRace", Comparator: series.Neq,Comparando:  idrace},
-						dataframe.F{Colname:"Scratched",Comparator: series.Eq,Comparando: false},
-						dataframe.F{Colname:"Position",Comparator: series.Neq,Comparando: 0},
-						dataframe.F{Colname:"IdSelection",Comparator: series.Eq,Comparando: idselection},
-						dataframe.F{Colname:"DaysSince",Comparator: series.Less,Comparando: dayssince},
-			)
-			numotherruns:=runs.Nrow()
-			if numotherruns>0	{
-				RealCol:=runs.Col("Real")
-				sectionals:=int(RealCol.Sum())
-//				if err!=nil	{
-//					log.Fatal("RealCol.Sum failed :",err)
-//				}
-				estimated:=numotherruns-sectionals
-				f4col:=runs.Col("F4")
-				f4max:=f4col.Max()
-				f4min:=f4col.Min()
-				f4med:=f4col.Median()
-				f4std:=f4col.StdDev()
-				f3col:=runs.Col("F3")
-				f3max:=f3col.Max()
-				f3min:=f3col.Min()
-				f3med:=f3col.Median()
-				f3std:=f3col.StdDev()
-				f2col:=runs.Col("F2")
-				f2max:=f2col.Max()
-				f2min:=f2col.Min()
-				f2med:=f2col.Median()
-				f2std:=f2col.StdDev()
-				f1col:=runs.Col("F1")
-				f1max:=f1col.Max()
-				f1min:=f1col.Min()
-				f1med:=f1col.Median()
-				f1std:=f1col.StdDev()
-				startcol:=runs.Col("Start")
-				startmax:=startcol.Max()
-				startmin:=startcol.Min()
-				startmed:=startcol.Median()
-				startstd:=startcol.StdDev()
-				finishcol:=runs.Col("Finish")
-				finishmax:=finishcol.Max()
-				finishmin:=finishcol.Min()
-				finishmed:=finishcol.Median()
-				finishstd:=finishcol.StdDev()
-				fmt.Printf("%d/%d/%d E/R/T Runs Start: %.1f/%.1f/%.1f/%.1f F4 : %.1f/%.1f/%.1f/%.1f F3: %.1f/%.1f/%.1f/%.1f F2: %.1f/%.1f/%.1f/%.1f F1: %.1f/%.1f/%.1f/%.1f Finish: %.1f/%.1f/%.1f/%.1f\n",
-						estimated,sectionals,numotherruns,startmin,startmax,startmed,startstd,f4min,f4max,f4med,f4std,
-						f3min,f3max,f3med,f3std,
-						f2min,f2max,f2med,f2std,
-						f1min,f1max,f1med,f1std,
-						finishmin,finishmax,finishmed,finishstd)
-			} else {
-				fmt.Printf("0 previous runs\n")
-			}
-			 
 		}
 	}
 	fmt.Println("all races processed")
-//	racedf.Rapply(ProcessRace)
-	
-//	fmt.Println("Saving ",FileName)
-//	innerdf.WriteCSV(fn,dataframe.WriteHeader(true))
+
 }
 
 func 	Expand(id,max int,scale float64)	(columns []string)	{
 	if id>max 	{
-		log.Fatal("Id ",id," is greater than max ",max)
+		log.Panic("Id ",id," is greater than max ",max)
 	}
 	for c:=1;c<=max;c++	{
 		if c==id	{
@@ -422,6 +578,13 @@ func 	Expand(id,max int,scale float64)	(columns []string)	{
 		}
 	}
 	return
+}
+
+func 	Limit(v,max int)		int	{
+	if v>max 	{
+		v=max
+	}
+	return v
 }
 
 func 	CalcWindQuarter(dir 	int)	(wq int)	{
@@ -439,9 +602,6 @@ func 	CalcWindQuarter(dir 	int)	(wq int)	{
 	}
 	return
 }
-	
-	
-	
 	
 
 func 	GrabRaceTypeTitles()	(results [NUMRACETYPE+1]string)	{
@@ -467,7 +627,7 @@ func 	GrabRaceTypeTitles()	(results [NUMRACETYPE+1]string)	{
 }
 
 
-func 	GrabRaceTypes(raceid int64)	(results []string)	{
+func 	GrabRaceTypes(raceid int)	(results []string)	{
 	for i:=0;i<=NUMRACETYPE;i++	{
 		results=append(results,"0")
 	}
@@ -490,6 +650,11 @@ func 	GrabRaceTypes(raceid int64)	(results []string)	{
 	return results[1:]
 }
 
+func ErrorNotNil(err error, msg string)	{
+	if err!=nil 	{
+		log.Fatal(msg," Failed: ",err)
+	}
+}
 
 func 	FindRaceTrack(key	string)		(index int, ok bool)	{
 	for r:=0;r<NumRaceTracks;r++	{
@@ -563,7 +728,7 @@ func 	GrabRaceDataFrames(year 	string, rtype string,mhs bool)	dataframe.DataFram
 			DB.Close()
 			log.Fatal("(GrabRacesDataframe)Rows Scan failed: ", err)
 		}
-		// grab the racetypes for this race id
+		// grab the wind details for this race id
 		race.WindQuarter=CalcWindQuarter(race.WindDir)
 		// expand out the rows
 			
@@ -574,7 +739,7 @@ func 	GrabRaceDataFrames(year 	string, rtype string,mhs bool)	dataframe.DataFram
 			fmt.Printf("Failed to find category %s, skipping\n",key)
 			continue
 		}
-		race.RaceTypes=GrabRaceTypeIds(race.IdRace)
+
 		rownum++
 		races=append(races,race)
 		fmt.Printf("Row: %d   Id: %d  Std:%.3f                      \r",rownum,race.IdRace,race.StdTime)
@@ -590,12 +755,12 @@ func 	GrabRaceDataFrames(year 	string, rtype string,mhs bool)	dataframe.DataFram
 }
 
 
-func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*dataframe.DataFrame	{
-	var 	runs 	[]RunnerRecord
+func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	dataframe.DataFrame	{
+	var 	runs 	[]DFRunnerRecord
 	var 	distance 	int
-//	var 	Furlongs 			float64
+//	var 	Furlongs	 			float64
 	var 	weight,position 				string
-	var 	f4,f3,f2,f1,finish 				sql.NullFloat64
+	var 	f4,f3,f2,f1,finish,isStdtime	sql.NullFloat64
 	var 	HaveRunner[40]					bool
 
 /*	query:=fmt.Sprintf("SELECT idraces,venues_idvenues,distance,round(distance/220,1),starters,idrunning,idrtype,idground,idclass,idage,idcond,windspeed,windgust,winddir,stdtime,wintime "+
@@ -616,17 +781,19 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 	if mhs 	{
 		lr="right "
 	}
-	query:=fmt.Sprintf("select idrunners,races_idraces,TO_DAYS(starttime)-%d,wintime,distance,selections_idselections,jockeys_idjockeys,trainers_idtrainers,runners.number,scratched,draw,position,iposition,weight,weightlbs,lengths,runners.age,runners.rating,odds,f4,f3,f2,f1,finish "+
+	query:=fmt.Sprintf("select idrunners,runners.races_idraces,TO_DAYS(starttime)-%d,wintime,distance,round(distance/220,1),venues_idvenues,idrtype,selections_idselections,jockeys_idjockeys,trainers_idtrainers,runners.number,scratched,draw,position,iposition,weight,weightlbs,lengths,runners.age,runners.rating,odds,f4,f3,f2,f1,finish,stdtime "+
 						"from runners "+
 						"%s join sectionals on runners_idrunners=idrunners "+
-						"left join races on races_idraces=races.idraces "+
+						"left join races on runners.races_idraces=races.idraces "+
+						"left join stdracetimes on stdracetimes.races_idraces=runners.races_idraces "+
 						"where year(starttime) <= %d "+ 
 						"order by races_idraces,iposition ",STARTOFTIME,lr,year)
 	if rtype!="" 	{
-		query=fmt.Sprintf("select idrunners,races_idraces,TO_DAYS(starttime)-%d,wintime,distance,selections_idselections,jockeys_idjockeys,trainers_idtrainers,runners.number,scratched,draw,position,iposition,weight,weightlbs,lengths,runners.age,runners.rating,odds,f4,f3,f2,f1,finish "+
+		query=fmt.Sprintf("select idrunners,runners.races_idraces,TO_DAYS(starttime)-%d,wintime,distance,round(distance/220,1),venues_idvenues,idrtype,selections_idselections,jockeys_idjockeys,trainers_idtrainers,runners.number,scratched,draw,position,iposition,weight,weightlbs,lengths,runners.age,runners.rating,odds,f4,f3,f2,f1,finish,stdtime "+
 							"from runners "+
 							"%s join sectionals on runners_idrunners=idrunners "+
 							"left join races on races_idraces=races.idraces "+
+							"left join stdracetimes on stdracetimes.races_idraces=runners.races_idraces "+
 							"where year(starttime) <= %d and rtype in (%s) "+ 
 							"order by races_idraces,iposition ",STARTOFTIME,lr,year,rtype)
 	}
@@ -643,14 +810,19 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 	lengthsbehind:=float64(0)
 	currentraceId:=-1
 	numrunners:=0
+	idvenue:=0
+	idrtype:=0
+	furlongs1:=float64(0)
 	avgfurtime:=float64(0)
 	firstrun:=true
+	missingstd:=0
 	for rows.Next() {
-		runner:=RunnerRecord{}
+		runner:=DFRunnerRecord{}
+		stdtime:=float64(0)
 		wintime:=float64(0)
-		if err := rows.Scan(&runner.IdRunner,&runner.IdRace,&runner.DaysSince,&wintime,&distance,&runner.IdSelection,&runner.IdJockey,&runner.IdTrainer,
+		if err := rows.Scan(&runner.IdRunner,&runner.IdRace,&runner.DaysSince,&wintime,&distance,&furlongs1,&idvenue,&idrtype,&runner.IdSelection,&runner.IdJockey,&runner.IdTrainer,
 					&runner.Number,&runner.Scratched,&runner.Draw,&position,&runner.Position,&weight,&runner.Weight,&runner.Lengths,
-					&runner.Age,&runner.Rating,&runner.Odds,&f4,&f3,&f2,&f1,&finish); err != nil {
+					&runner.Age,&runner.Rating,&runner.Odds,&f4,&f3,&f2,&f1,&finish,&isStdtime); err != nil {
 			// Check for a scan error.
 			rows.Close()
 			DB.Close()
@@ -664,6 +836,19 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 		if wintime==0	|| distance==0	|| runner.Number==0 {
 			continue
 		}
+		if isStdtime.Valid 	{
+			stdtime=isStdtime.Float64
+		}	else 	{
+		//	fmt.Printf("Skipping due to missing standard time                                   \r")
+			missingstd++
+			continue
+		}
+		runner.IdVenue=idvenue
+		runner.Distance=distance
+		key:=fmt.Sprintf("%s:%.1f:%d",Venues[idvenue],furlongs1,idrtype)
+		if tracknum,ok:=FindRaceTrack(key);ok	{
+			runner.IdTrack=tracknum
+		}	
 		runner.Real=1
 		finished=false
 		avgfurtime=0
@@ -699,6 +884,7 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 			dist:=distancef-(lengthsbehind*LENGTH2YARDS)
 			avgfurtime=wintime*220/dist
 			finished=true
+			runner.LB=lengthsbehind
 		}
 		HaveRunner[runner.Number-1]=true	// mark this horse number as processed
 		if finish.Valid 	{
@@ -707,10 +893,6 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 		if runner.Finish==0 && finished 	{
 			runner.Finish=wintime+avgfurtime*((lengthsbehind*LENGTH2YARDS)/220)
 		}
-//		fmt.Printf("RaceId: %d CRI %d WT: %.1f Pos: %d H:%d EMS %v Finished %v avgfurtime %.2f lb %.1f RL %.1f\n",
-//				runner.IdRace,currentraceId,wintime,runner.Position,runner.Number,ems,finished,avgfurtime,lengthsbehind,
-//				runner.Lengths)
-	//	time.Sleep(1*time.Second)
 		if f4.Valid 	{
 			runner.F4=f4.Float64
 		}	else 	{
@@ -764,22 +946,45 @@ func 	GrabRunnerDataFrames(year 	int, rtype string, ems 	bool, mhs bool)	*datafr
 			fmt.Printf("Failed to find category %s, skipping\n",key)
 			continue
 		} */
+		runner.Odds=runner.Odds/1000
 		rownum++
+		if stdtime!=0	{
+			if runner.Start!=0	{
+				runner.Start=stdtime/runner.Start
+			}
+			if runner.Finish!=0	{
+				runner.Finish=(distancef*stdtime/220)/runner.Finish
+			}
+			if runner.F4!=0	{
+				runner.F4=stdtime/runner.F4
+			}
+			if runner.F3!=0	{
+				runner.F3=stdtime/runner.F3
+			}
+			if runner.F2!=0	{
+				runner.F2=stdtime/runner.F2
+			}
+			if runner.F1!=0	{
+				runner.F1=stdtime/runner.F1
+			}
+		}	else 	{
+			missingstd++
+			continue
+		}
 		runs=append(runs,runner)
 		numrunners++
-		fmt.Printf("Row: %d   RaceId: %d  RunnerId:%d EMS:%v F4:%.3f F3:%3f F2:%.3f F1: %.3f Finish:%.2f           \r",rownum,runner.IdRace,runner.IdRunner,
-									runner.Real,runner.F4,runner.F3,runner.F2,runner.F1,runner.Finish)
+		fmt.Printf("Row: %d   RaceId: %d  RunnerId:%d EMS:%.0f Start:%.3f F4:%.3f F3:%3f F2:%.3f F1: %.3f Finish:%.2f           \r",rownum,runner.IdRace,runner.IdRunner,
+									runner.Real,runner.Start,runner.F4,runner.F3,runner.F2,runner.F1,runner.Finish)
 	}
-	fmt.Printf("\n")
+	fmt.Printf("\nSkipped %d/%d records due to missing standard times\n",missingstd,len(runs))
 	rerr := rows.Close()
 	if rerr != nil {
 		rows.Close()
 		DB.Close()
 		log.Fatal("(GrabRunnerDataFrames)Rows Close: ", err)
 	}
-	fmt.Println("RUNS: ",len(runs))
 	df:=dataframe.LoadStructs(runs)
-	return &df
+	return df
 }
 
 func	ProcessRace(s series.Series) series.Series {
@@ -812,3 +1017,175 @@ func 	ProcessRunner(s series.Series)	series.Series	{
 	fmt.Println(runs)
 	return series.Floats(floats)
 }
+
+func 	StarterCategory(starter int)	(starters int)	{
+	switch	{
+	case starter<2:	return 0
+	case starter>=2 && starter<=6:		starters=1
+	case starter>=7 && starter<=10:	starters=2
+	case starter>=11 && starter<=15:	starters=3
+	case starter>=16 && starter<=24:	starters=4
+	case starter>24:							starters=5
+	}
+	return
+}
+
+func 	DaysCategory(days int)	int	{
+	if 	days==0 	{
+		return	0
+	}
+	if days>MAXDAYS	{
+		days=MAXDAYS
+	}
+	startofcat:=0
+	for category:=0;category<NUMDAYCATS;category++	{
+		startofcat+=DaysCategorySizes[category]
+		if days<startofcat	{
+			return category+1				// return 1 to 23
+		}
+	}
+	return NUMDAYCATS
+}
+
+func 	RunsCategory(runs int)	int	{
+	if runs==0	{
+		return 0
+	}
+	if runs>NUMRUNSLAST	{
+		runs=NUMRUNSLAST
+	}
+	return runs
+}
+	
+func 	(r *RunnerRecord)FinishCategory()	(results []string) 	{
+	for p:=0;p<4;p++	{
+		results=append(results,"0")
+	}
+	if r.Position==0	&& (r.Scratched || r.IdSelection==0)	{
+		return
+	}
+	switch 	{
+	case r.Position==0:	results[3]="1"
+	case r.Position==1:	results[0]="1"
+	case r.Position==2 || r.Position==3:	results[1]="1"
+	case r.Position>3:	results[2]="1"
+	}
+	return
+}
+
+func 	ScaledNumber(num ,max float64)	float64	{
+	if num>max	{
+		num=max
+	}
+	return num/max
+}
+
+func 	WriteHeaders(fn	*os.File)	{
+// write header
+
+			
+	for t:=0;t<NumRaceTracks;t++	{
+		fn.WriteString(fmt.Sprintf("%s,",RaceTracks[t]))
+	}
+	for v:=1;v<NUMVENUES;v++	{
+		fn.WriteString(fmt.Sprintf("%s,",Venues[v]))
+	}
+	for s:=1;s<=NUMSTARTERS;s++	{
+		fn.WriteString(fmt.Sprintf("%s,",Starters[s]))
+	}
+	fn.WriteString("Dist,")
+	for i:=1;i<=NUMRUNNING;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",Runnings[i]))
+	}
+	for i:=1;i<=NUMCOND;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",Conds[i]))
+	}
+	for i:=1;i<=NUMAGE;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",Ages[i]))
+	} 
+	for i:=1;i<=NUMRTYPE;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",RTypes[i]))
+	}
+	for i:=1;i<=NUMGROUND;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",Grounds[i]))
+	}
+	for i:=1;i<=NUMCLASS;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",Classes[i]))
+	}
+	racetypetitles:=GrabRaceTypeTitles()
+	for i:=1;i<=NUMRACETYPE;i++	{
+		fn.WriteString(racetypetitles[i]+",")
+	}
+	for i:=1;i<=NUMWINDDIR;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",WindStrs[i]))
+	}
+	for i:=1;i<=NUMWINDDIR;i++	{
+		fn.WriteString(fmt.Sprintf("%s,",WindGusts[i]))
+	}
+	fn.WriteString("StdTime,")
+	for r:=1;r<=MAXRUNNERS;r++	{
+		// write out the headers for each horse
+		fn.WriteString(fmt.Sprintf("Include%d,Scratched%d,",r,r))
+		for draw:=0;draw<NUMDRAW;draw++	{
+			fn.WriteString(fmt.Sprintf("Draw%d-%d,",draw,r))
+		}
+		fn.WriteString(fmt.Sprintf("Weight%d,",r))
+		for age:=0;age<NUMHORSEAGE;age++	{
+			fn.WriteString(fmt.Sprintf("Age%d-%d,",age+2,r))
+		}
+		fn.WriteString(fmt.Sprintf("Rating%d,Odds%d,FirstRun%d,Real%d,",r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgReal%d,AvgPos%d,MedPos%d,SDPos%d,MinPos%d,MaxPos%d,AvgLB%d,MedLB%d,SDLB%d,MinLB%d,MaxLB%d,",
+						r,r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgOdds%d,MedOdds%d,SDOdds%d,MinOdds%d,MaxOdds%d,AvgStart%d,MedStart%d,SDStart%d,MinStart%d,MaxStart%d,",
+						r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgF4-%d,MedF4-%d,SDF4-%d,MinF4-%d,MaxF4-%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgF3-%d,MedF3-%d,SDF3-%d,MinF3-%d,MaxF3-%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgF2-%d,MedF2-%d,SDF2-%d,MinF2-%d,MaxF2-%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgF1-%d,MedF1-%d,SDF1-%d,MinF1-%d,MaxF1-%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("AvgF%d,MedF%d,SDF%d,MinF%d,MaxF%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("HStrike%d,HVStrike%d,HDStrike%d,HTStrike%d,HJStrike%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("HPStrike%d,HVPStrike%d,HDPStrike%d,HTPStrike%d,HJPStrike%d,HDNFStrike%d,",r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JStrike%d,JVStrike%d,JDStrike%d,JTStrike%d,JOStrike%d,JPStrike%d,JVPStrike%d,JDPStrike%d,JTPStrike%d,JOPStrike%d,JDNF%d,",r,r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("TStrike%d,TVStrike%d,TDStrike%d,TTStrike%d,TOStrike%d,TPStrike%d,TVPStrike%d,TDPStrike%d,TTPStrike%d,TOPStrike%d,TDNF%d,",r,r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("HRStrike%d,HRPStrike%d,HRDNFStrike%d,HRRStrike%d,HRRPStrike%d,HRRDNFStrike%d,",r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JRStrike%d,JRVStrike%d,JRDStrike%d,JRTStrike%d,JROStrike%d,JRPStrike%d,JRVPStrike%d,JRDPStrike%d,JRTPStrike%d,JROPStrike%d,JRDNF%d,",r,r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JRRStrike%d,JRRVStrike%d,JRRDStrike%d,JRRTStrike%d,JRROStrike%d,JRRPStrike%d,JRRVPStrike%d,JRRDPStrike%d,JRRTPStrike%d,JRROPStrike%d,JRRDNF%d,",r,r,r,r,r,r,r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("TRStrike%d,TRPStrike%d,TRRStrike%d,TRRPStrike%d,",r,r,r,r))
+		st:=0
+		for c:=0;c<NUMDAYCATS;c++	{
+			st+=DaysCategorySizes[c]
+			fn.WriteString(fmt.Sprintf("TLastRun%d-%d,",st,r))
+		}
+		st=0
+		for c:=0;c<NUMDAYCATS;c++	{
+			st+=DaysCategorySizes[c]
+			fn.WriteString(fmt.Sprintf("TLastWin%d-%d,",st,r))
+		}
+		st=0
+		for c:=0;c<NUMDAYCATS;c++	{
+			st+=DaysCategorySizes[c]
+			fn.WriteString(fmt.Sprintf("TLastPlace%d-%d,",st,r))
+		}
+		for c:=0;c<NUMRUNSLAST;c++	{
+			fn.WriteString(fmt.Sprintf("RLastWin%d-%d,",c+1,r))
+		}
+		for c:=0;c<NUMRUNSLAST;c++	{
+			fn.WriteString(fmt.Sprintf("RLastPlace%d-%d,",c+1,r))
+		}
+		fn.WriteString(fmt.Sprintf("HNRuns%d,VNRuns%d,DNRuns%d,TNRuns%d,JNRuns%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("HRNRuns%d,VRNRuns%d,DRNRuns%d,TRNRuns%d,JRNRuns%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("HRRNRuns%d,VRRNRuns%d,DRRNRuns%d,TRRNRuns%d,JRRNRuns%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JNum%d,JVNum%d,JDNum%d,JTNum%d,JONum%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JRNum%d,JRVNum%d,JRDNum%d,JRTNum%d,JRONum%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("JRRNum%d,JRRVNum%d,JRRDNum%d,JRRTNum%d,JRRONum%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("TNum%d,TVNum%d,TDNum%d,TTNum%d,TONum%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("TRNum%d,TRVNum%d,TRDNum%d,TRTNum%d,TRONum%d,",r,r,r,r,r))
+		fn.WriteString(fmt.Sprintf("TRRNum%d,TRRVNum%d,TRRDNum%d,TRRTNum%d,TRRONum%d,",r,r,r,r,r))
+	}
+	for r:=1;r<=MAXRUNNERS;r++	{
+		fn.WriteString(fmt.Sprintf("First%d,Placed%d,Finshed%d,DNF%d,LB%d,Start%d,Finish%d,",r,r,r,r,r,r,r))
+	}
+	fn.WriteString("\n")
+}	
+	
+		
