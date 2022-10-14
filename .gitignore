@@ -1,1 +1,5 @@
 racing/mlexport/mlexport.old
+racing/mllearn/model.gob
+racing/mllearn/input.csv
+racing/mllearn/input-nan.csv
+racing/mllearn/race-18-21.csv
